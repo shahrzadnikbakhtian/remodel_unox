@@ -12,7 +12,8 @@ from config import (
     CATEGORIES_TABLE,
     ROADS_TABLE,
     FILTERED_STATION_CONDITION,
-    DATE_FILTER_CONDITION
+    DATE_FILTER_CONDITION,
+    NORDLAND_GEOJSON_PARAM,
 )
 
 # ---------------------- Setup ----------------------
@@ -44,6 +45,19 @@ def save_dataframe(df: pd.DataFrame, path: str, label: str) -> None:
         logging.info(f"{label} saved to: {path}")
 
 # ---------------------- Query Loaders ----------------------
+def _run_query(query: str) -> pd.DataFrame:
+    params = []
+    if "@nordland_geojson" in query:
+        params.append(
+            bigquery.ScalarQueryParameter("nordland_geojson", "STRING", NORDLAND_GEOJSON_PARAM)
+        )
+    job_config = bigquery.QueryJobConfig(query_parameters=params, use_legacy_sql=False)
+    return client.query(query, job_config=job_config).to_dataframe()
+
+run_query = _run_query
+
+
+
 def load_static_data() -> pd.DataFrame:
     query = f"""
         WITH filtered_stations AS (
@@ -82,7 +96,8 @@ def load_static_data() -> pd.DataFrame:
         GROUP BY s.id, s.capacity_kw, st.address, st.title, st.country_name, s.calendar_day_count
         ORDER BY s.calendar_day_count DESC
     """
-    return client.query(query).to_dataframe()
+    # return client.query(query).to_dataframe()
+    return run_query(query)
 
 
 def load_occupation_data() -> pd.DataFrame:
@@ -139,7 +154,8 @@ def load_occupation_data() -> pd.DataFrame:
         ORDER BY percentage_average DESC;
 
     """
-    return client.query(query).to_dataframe()
+    # return client.query(query).to_dataframe()
+    return run_query(query)
 
 # ---------------------- Timeseries Loaders ----------------------
     
@@ -380,8 +396,40 @@ def load_timeseries_data() -> pd.DataFrame:
         LEFT JOIN weekly_arrays      wa USING (id)
         ORDER BY u.start_day ASC;
     """
-    return client.query(query).to_dataframe()
+    # return client.query(query).to_dataframe()
+    return run_query(query)
 
+
+
+def load_hourly_data() -> pd.DataFrame:
+    query = f"""
+
+        WITH filtered_stations AS (
+        SELECT id, capacity_kw, size_total, operator, title, geometry
+        FROM `{STATIC_TABLE}` AS s
+        WHERE {FILTERED_STATION_CONDITION}
+    )
+
+    SELECT 
+        u.id,
+        u.hour,
+        u.charging_duration,
+        u.capacity_kw,
+        s.operator,
+        s.geometry,
+        s.title,
+        DATE(u.hour) AS day,
+        FORMAT_DATE('%Y-%m', DATE(u.hour)) AS month,
+        EXTRACT(HOUR FROM u.hour) AS hour_of_day,
+        s.size_total,
+    FROM `{OCCUPATION_TABLE}` u
+    JOIN filtered_stations s ON u.id = s.id
+
+    WHERE DATE(u.hour) BETWEEN DATE '2024-09-01' AND DATE '2025-09-15'
+    ORDER BY u.id, u.hour;
+    """
+    
+    return run_query(query)
 
 
 # ---------------------- POI Loaders ----------------------
@@ -425,74 +473,15 @@ def load_poi_data() -> pd.DataFrame:
         GROUP BY s.id, cat.superclass
         ORDER BY s.id, poi_count DESC
     """
-    return client.query(query).to_dataframe()
-
-
-def load_road_data_bq() -> pd.DataFrame:
-    query = f"""
-    WITH filtered_stations AS (
-    SELECT id, capacity_kw, size_total, geometry
-    FROM {STATIC_TABLE}
-    WHERE {FILTERED_STATION_CONDITION}
-    ),
-
-    base_data AS (
-    SELECT
-        u.id,
-        DATE(u.hour) AS day
-    FROM {OCCUPATION_TABLE} u
-    JOIN filtered_stations s ON u.id = s.id
-    WHERE {DATE_FILTER_CONDITION}
-    ),
-
-    utilization_summary AS (
-    SELECT
-        id,
-        MIN(day) AS start_day,
-        MAX(day) AS end_day,
-        DATE_DIFF(MAX(day), MIN(day), DAY) + 1 AS calendar_day_count
-    FROM base_data
-    GROUP BY id
-    ),
-
-    stations_with_utilization AS (
-    SELECT
-        s.id,
-        s.capacity_kw,
-        s.size_total,
-        s.geometry
-    FROM utilization_summary u
-    JOIN filtered_stations s ON u.id = s.id
-    WHERE u.calendar_day_count > 100
-    )
-
-    SELECT
-            s.id,
-            roads.class AS type_road,
-            ANY_VALUE(s.geometry) AS geometry,
-            COUNT(DISTINCT roads.id) AS roads_count,
-            MIN(ST_DISTANCE(s.geometry, ST_GEOGFROMTEXT(roads.geometry))) AS closest_distance_meters,
-            ARRAY_AGG(DISTINCT roads.name IGNORE NULLS) AS roads_names
-        FROM 
-            {STATIC_TABLE} ss
-        LEFT JOIN 
-            {ROADS_TABLE} roads
-            ON ST_DWITHIN(s.geometry, ST_GEOGFROMTEXT(roads.geometry), 500)
-        GROUP BY 
-            s.id, roads.class
-        ORDER BY 
-            s.id, roads_count DESC
-    """
-    road_df= client.query(query).to_dataframe()
-    return road_df_bq
-
-
+    # return client.query(query).to_dataframe()
+    return run_query(query)
 
 def load_road_data() -> pd.DataFrame:
     query = f"""
     select * from {ROADS_TABLE}
     """
-    return client.query(query).to_dataframe()
+    # return client.query(query).to_dataframe()
+    return run_query(query)
 
 # ---------------------- Feature Builders ----------------------
 
@@ -571,6 +560,10 @@ def main():
     timeseries_df = load_timeseries_data()
     save_dataframe(timeseries_df, f"{DATA_DIR}/timeseries_df.csv", "Timeseries data")
 
+    # Hourly
+    hourly_df = load_hourly_data()
+    save_dataframe(hourly_df, f"{DATA_DIR}/hourly_df.csv", "Hourly data")
+
 
     # POI
     poi_counts_df = load_poi_data()
@@ -583,10 +576,7 @@ def main():
     station_with_poi_df = pd.merge(static_occupation_df, poi_features_df, on="id", how="left")
     save_dataframe(station_with_poi_df, MERGED_POI_PATH, "Final merged POI features")
 
-
     # Road
-    # road_df = pd.read_csv("raw_road_df.csv")  # or replace with BQ loader
-    # log_df_info(road_df, "Raw Road data")
     road_df = load_road_data()
     log_df_info(road_df, "Raw Road data")
 
