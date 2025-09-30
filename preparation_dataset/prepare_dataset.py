@@ -6,6 +6,7 @@ from typing import Dict, Any
 from shapely import wkt
 import geopandas as gpd
 from google.cloud import bigquery
+from config import DF_DIR, OUTPUT_DIR
 
 # -------------------- Config & Setup --------------------
 
@@ -40,54 +41,14 @@ POI_TIME_PER_VISIT = {
 }
 
 
-# POI_CATEGORY_MAP = { 
-#     'Supermarket': supermarket_count + shopping_center_count,
-#     'Shopping' : electronics_count +hobby_count +home_count +clothing_count + shopping_center_count,
-#     'Services': medical_count +service_count +public_service_count + beauty_count,
-#     'Hotel': accommodation_count,
-#     'Restaurant' : cafe_and_restaurant_count + food_count,
-#     'Leisure': activities_count +religious_count ,
-# }
-
-
-
-
-
-# CONCAT(
-#   CAST(
-#     (CASE WHEN TRIM(IFNULL(CAST(Supermarket AS TEXT), '')) = '' OR TRIM(IFNULL(CAST(Supermarket AS TEXT), '')) = '0' THEN 0 ELSE 1 END) +
-#     (CASE WHEN TRIM(IFNULL(CAST(Shopping   AS TEXT), '')) = '' OR TRIM(IFNULL(CAST(Shopping   AS TEXT), '')) = '0' THEN 0 ELSE 1 END) +
-#     (CASE WHEN TRIM(IFNULL(CAST(Services   AS TEXT), '')) = '' OR TRIM(IFNULL(CAST(Services   AS TEXT), '')) = '0' THEN 0 ELSE 1 END) +
-#     (CASE WHEN TRIM(IFNULL(CAST(Hotel      AS TEXT), '')) = '' OR TRIM(IFNULL(CAST(Hotel      AS TEXT), '')) = '0' THEN 0 ELSE 1 END) +
-#     (CASE WHEN TRIM(IFNULL(CAST(Restaurant AS TEXT), '')) = '' OR TRIM(IFNULL(CAST(Restaurant AS TEXT), '')) = '0' THEN 0 ELSE 1 END) +
-#     (CASE WHEN TRIM(IFNULL(CAST(Leisure    AS TEXT), '')) = '' OR TRIM(IFNULL(CAST(Leisure    AS TEXT), '')) = '0' THEN 0 ELSE 1 END)
-#   AS TEXT),
-#   '/6'
-# )
-
-# ROAD_CATEGORY_MAP = {
-#     IF(
-#   motorway_dist <= trunk_dist AND motorway_dist <= primary_dist,
-#   motorway_dist,
-#   IF(
-#     trunk_dist <= motorway_dist AND trunk_dist <= primary_dist,
-#     trunk_dist,
-#     primary_dist
-#   )
-# )
-# }
-
-
-
 # -------------------- Loaders --------------------
-
 def load_segmented_data() -> pd.DataFrame:
-    return pd.read_csv("data/station_with_poi_df.csv")
-    
+    return pd.read_csv(DF_DIR / "station_with_poi_df.csv")
 
 def load_classified_roads() -> pd.DataFrame:
-    df = pd.read_csv("data/station_with_road_df.csv")
+    df = pd.read_csv(DF_DIR / "station_with_road_df.csv")
     return df.drop(columns=["road_count_nan", "road_distance_nan"], errors="ignore")
+
 
 def load_population_data() -> gpd.GeoDataFrame:
     query = """
@@ -198,9 +159,6 @@ def extract_coordinates(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-
-
-
 # -------------------- Looker --------------------
 
 def _preview(df: pd.DataFrame, cols: list[str], title: str, n: int = 5) -> None:
@@ -292,7 +250,6 @@ def add_nearest_major_road(df: pd.DataFrame, verbose: bool = False) -> pd.DataFr
 
 
 
-
 # def ensure_cols(df: pd.DataFrame, cols: list[str]) -> None:
 #     for c in cols:
 #         if c not in df.columns:
@@ -327,8 +284,6 @@ def add_nearest_major_road(df: pd.DataFrame, verbose: bool = False) -> pd.DataFr
 
 
 
-
-
 # def add_poi_presence_ratio(df: pd.DataFrame) -> pd.DataFrame:
 #     cats = ["Supermarket", "Shopping", "Services", "Hotel", "Restaurant", "Leisure"]
 #     # ensure the columns exist even if the previous step was skipped
@@ -353,14 +308,6 @@ def add_nearest_major_road(df: pd.DataFrame, verbose: bool = False) -> pd.DataFr
 #     df["nearest_major_road_type"] = df["nearest_major_road_type"].str.replace("_dist$", "", regex=True)
 
 #     return df
-
-
-
-
-
-
-
-
 
 
 # -------------------- Scoring --------------------
@@ -480,9 +427,15 @@ def main():
     merged[cols_to_round] = merged[cols_to_round].round(2)
 
 
-    merged.to_csv("nordic_stations_df_new.csv", index=False)
-    print("Saved to nordic_stations_df_new.csv")
-    print("POI distance columns:", [col for col in merged.columns])
+    # merged.to_csv("nordic_stations_df_new.csv", index=False)
+    # print("Saved to nordic_stations_df_new.csv")
+    # print("POI distance columns:", [col for col in merged.columns])
+
+
+    out_file = OUTPUT_DIR / "nordic_stations_df_new.csv"
+    merged.to_csv(out_file, index=False)
+    print(f"Saved to {out_file}")
+
 
 
 
