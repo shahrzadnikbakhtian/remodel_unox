@@ -13,21 +13,20 @@ from config import (
     ROADS_TABLE,
     FILTERED_STATION_CONDITION,
     DATE_FILTER_CONDITION,
-    NORDLAND_GEOJSON_PARAM,
+    REGION_GEOJSON_PARAMS,
+    DF_DIR,
 )
 
 # ---------------------- Setup ----------------------
 client = bigquery.Client(project=PROJECT_ID)
 logging.basicConfig(level=logging.INFO)
 
-# Output paths
-DATA_DIR = "data"
-OCCUPATION_PATH = f"{DATA_DIR}/occupation_df.csv"
-STATIC_OCCUPATION_PATH = f"{DATA_DIR}/static_occupation_df.csv"
-STATION_FEATURES_PATH = f"{DATA_DIR}/poi_features_df.csv"
-MERGED_POI_PATH = f"{DATA_DIR}/station_with_poi_df.csv"
-ROAD_FEATURES_PATH = f"{DATA_DIR}/roads_df.csv"
-MERGED_ROAD_PATH = f"{DATA_DIR}/station_with_road_df.csv"
+OCCUPATION_PATH        = DF_DIR / "occupation_df.csv"
+STATIC_OCCUPATION_PATH = DF_DIR / "static_occupation_df.csv"
+STATION_FEATURES_PATH  = DF_DIR / "poi_features_df.csv"
+MERGED_POI_PATH        = DF_DIR / "station_with_poi_df.csv"
+ROAD_FEATURES_PATH     = DF_DIR / "roads_df.csv"
+MERGED_ROAD_PATH       = DF_DIR / "station_with_road_df.csv"
 
 
 # ---------------------- Config ----------------------
@@ -45,12 +44,34 @@ def save_dataframe(df: pd.DataFrame, path: str, label: str) -> None:
         logging.info(f"{label} saved to: {path}")
 
 # ---------------------- Query Loaders ----------------------
+# def _run_query(query: str) -> pd.DataFrame:
+#     params = []
+#     if "@nordland_geojson" in query:
+#         params.append(
+#             bigquery.ScalarQueryParameter("nordland_geojson", "STRING", NORDLAND_GEOJSON_PARAM)
+#         )
+#     job_config = bigquery.QueryJobConfig(query_parameters=params, use_legacy_sql=False)
+#     return client.query(query, job_config=job_config).to_dataframe()
+
+# run_query = _run_query
+
+
+
 def _run_query(query: str) -> pd.DataFrame:
     params = []
+    # Multi-region array parameter
+    if "@regions_geojson" in query:
+        from config import REGION_GEOJSON_PARAMS 
+        params.append(
+            bigquery.ArrayQueryParameter("regions_geojson", "STRING", REGION_GEOJSON_PARAMS)
+        )
+    # Legacy single param (kept for safety if you reference it elsewhere)
     if "@nordland_geojson" in query:
+        from config import NORDLAND_GEOJSON_PARAM
         params.append(
             bigquery.ScalarQueryParameter("nordland_geojson", "STRING", NORDLAND_GEOJSON_PARAM)
         )
+
     job_config = bigquery.QueryJobConfig(query_parameters=params, use_legacy_sql=False)
     return client.query(query, job_config=job_config).to_dataframe()
 
@@ -154,7 +175,6 @@ def load_occupation_data() -> pd.DataFrame:
         ORDER BY percentage_average DESC;
 
     """
-    # return client.query(query).to_dataframe()
     return run_query(query)
 
 # ---------------------- Timeseries Loaders ----------------------
@@ -396,7 +416,6 @@ def load_timeseries_data() -> pd.DataFrame:
         LEFT JOIN weekly_arrays      wa USING (id)
         ORDER BY u.start_day ASC;
     """
-    # return client.query(query).to_dataframe()
     return run_query(query)
 
 
@@ -473,14 +492,12 @@ def load_poi_data() -> pd.DataFrame:
         GROUP BY s.id, cat.superclass
         ORDER BY s.id, poi_count DESC
     """
-    # return client.query(query).to_dataframe()
     return run_query(query)
 
 def load_road_data() -> pd.DataFrame:
     query = f"""
     select * from {ROADS_TABLE}
     """
-    # return client.query(query).to_dataframe()
     return run_query(query)
 
 # ---------------------- Feature Builders ----------------------
@@ -544,7 +561,7 @@ def build_road_features(road_df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------- Main ----------------------
 def main():
     if SAVE_TO_DISK:
-        os.makedirs(DATA_DIR, exist_ok=True)
+        DF_DIR.mkdir(parents=True, exist_ok=True)
 
 
     # Occupation
@@ -558,12 +575,13 @@ def main():
 
     # Timeseries
     timeseries_df = load_timeseries_data()
-    save_dataframe(timeseries_df, f"{DATA_DIR}/timeseries_df.csv", "Timeseries data")
+    # save_dataframe(timeseries_df, f"{DATA_DIR}/timeseries_df.csv", "Timeseries data")
+    save_dataframe(timeseries_df, DF_DIR / "timeseries_df.csv", "Timeseries data")
 
     # Hourly
     hourly_df = load_hourly_data()
-    save_dataframe(hourly_df, f"{DATA_DIR}/hourly_df.csv", "Hourly data")
-
+    # save_dataframe(hourly_df, f"{DATA_DIR}/hourly_df.csv", "Hourly data")
+    save_dataframe(hourly_df, DF_DIR / "hourly_df.csv", "Hourly data")
 
     # POI
     poi_counts_df = load_poi_data()
@@ -579,9 +597,6 @@ def main():
     # Road
     road_df = load_road_data()
     log_df_info(road_df, "Raw Road data")
-
-
-
     road_features = build_road_features(road_df)
     save_dataframe(road_features, ROAD_FEATURES_PATH, "Road features")
 
